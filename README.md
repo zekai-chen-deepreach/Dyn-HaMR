@@ -62,7 +62,7 @@ We propose **Dyn-HaMR** to reconstruct 4D global hand motion from monocular vide
 
 ## News :triangular_flag_on_post:
 - [2025/11/20] 🚀 **Major Update**: 
-  - **Integrated [VIPE](https://github.com/facebookresearch/vipe)** for camera estimation, significantly improving reconstruction quality over DROID-SLAM
+  - **Integrated [VIPE](https://github.com/nv-tlabs/vipe)** for camera estimation, significantly improving reconstruction quality over DROID-SLAM
   - **Enhanced Hand Tracker** with robust hallucination prevention and handedness correction for better hand tracking and **significantly** Improved temporal consistency. Please `pip install ultralytics==8.1.34` since YOLO is using in this version (Thanks to [WiloR](https://github.com/rolpotamias/WiLoR)). Please download the checkpoint from [here](https://huggingface.co/spaces/rolpotamias/WiLoR/resolve/main/pretrained_models/detector.pt) and put it under `third-party/hamer/pretrained_models`.
 
   See comparison below:
