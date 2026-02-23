@@ -77,43 +77,27 @@ def run_mano(body_model, trans, root_orient, body_pose, is_right, betas=None, on
     betas : (optional) B x D
     """
     B, T, _ = trans.shape
-    bm_batch_size = body_model.batch_size
-    assert bm_batch_size % B == 0
-    # assert (is_right[0]==is_right[0][0]).all(), f'{is_right}'
-    # assert (is_right[1]==is_right[1][0]).all(), f'{is_right}'
-
-    seq_len = bm_batch_size // B
     bm_num_betas = body_model.num_betas
-    J_BODY = len(MANO_JOINTS) - 1  # all joints except root
-    # print('utils.py, seq_len, T: ', seq_len, T, bm_batch_size, B) # 1, 120, 1, 1
-    # print('trans, root_orient, body_pose:', trans.shape, root_orient.shape, body_pose.shape)
-    if T == 1:
-        raise ValueError
-        # must expand to use with body model
-        trans = trans.expand(B, seq_len, 3)
-        root_orient = root_orient.expand(B, seq_len, 3)
-        body_pose = body_pose.expand(B, seq_len, J_BODY * 3)
-    elif T != seq_len:
-        # print(trans.shape, root_orient.shape, body_pose.shape)
-        trans, root_orient, body_pose = zero_pad_tensors(
-            [trans, root_orient, body_pose], seq_len - T
-        )
+
     if betas is None:
         betas = torch.zeros(B, bm_num_betas, device=trans.device)
-    betas = betas.reshape((B, 1, bm_num_betas)).expand((B, seq_len, bm_num_betas))
-    # print('body_pose: ', body_pose.reshape((B * seq_len, -1)).shape)
+    if betas.dim() == 1:
+        betas = betas.unsqueeze(0)
+    if betas.shape[0] != B:
+        betas = betas.expand(B, -1)
+    betas = betas.reshape((B, 1, bm_num_betas)).expand((B, T, bm_num_betas))
 
     mano_output = body_model(
-        hand_pose=body_pose.reshape((B * seq_len, -1)),
-        betas=betas.reshape((B * seq_len, -1)),
-        global_orient=root_orient.reshape((B * seq_len, -1)),
-        transl=trans.reshape((B * seq_len, -1)),
+        hand_pose=body_pose.reshape((B * T, -1)),
+        betas=betas.reshape((B * T, -1)),
+        global_orient=root_orient.reshape((B * T, -1)),
+        transl=trans.reshape((B * T, -1)),
     )
     joints = mano_output.joints
     verts = mano_output.vertices
 
-    joints = joints.reshape(B, seq_len, -1, 3)[:, :T]
-    verts = verts.reshape(B, seq_len, -1, 3)[:, :T]
+    joints = joints.reshape(B, T, -1, 3)
+    verts = verts.reshape(B, T, -1, 3)
     is_right = is_right.unsqueeze(-1)
 
     if not only_right:    
@@ -212,7 +196,7 @@ def get_stage2_res(base_dir, device, npz_init_dict, hand_model):
  
     pose = torch.from_numpy(np.asarray(data_poses, np.float32)).to(device)
     pose = pose.view(-1, 15 + 1, 3)  # axis-angle (T, J, 3)
-    assert len(pose) == 128
+    # assert len(pose) == 128  # Removed: chunking to 128 happens later in multi_stage_opt
 
     trans = torch.from_numpy(np.asarray(cdata['trans'], np.float32)).to(device)  # global translation (T, 3)
 
@@ -576,7 +560,7 @@ def motion_reconstruction(hand_model, target, output_dir, steps, T=None, idx=0):
 
             R = matrix_to_axis_angle(rotation_6d_to_matrix(opt_root_orient))
             T = output['trans']
-            P = body_pose.reshape(1, 128, 45)
+            P = body_pose.reshape(body_pose.shape[0], body_pose.shape[1], -1)
             Be = opt_betas
 
         DR = matrix_to_axis_angle(local_rotmat[:, :, 0]).clone()
@@ -587,10 +571,6 @@ def motion_reconstruction(hand_model, target, output_dir, steps, T=None, idx=0):
         trans = global_trans 
         trans_gt = target['trans']  # (B, T, 3)
 
-        if trans.shape[0] > 1:
-            raise ValueError
-
-        assert local_rotmat.shape[0] == 1
         return R, T, P, Be, DR
         # for i in range(local_rotmat.shape[0]): # (1, T. J, 3, 3)
             
@@ -722,8 +702,9 @@ def multi_stage_opt(opt, device, obs_data, res_dict, hand_model, config_f, exp_s
         rhand_orient_padded, rhand_betas_padded, rhand_trans_padded, rhand_pose_padded, is_right = \
                             res_dict['root_orient'][idx], res_dict['betas'][idx], res_dict['trans'][idx], res_dict['pose_body'][idx], res_dict['is_right'][idx]
 
-        cam_center = torch.tensor(res_dict['intrins'][2:][None]).repeat(128, 1)  # (T, 2)
-        cam_f = torch.tensor(res_dict['intrins'][:2][None]).repeat(128, 1)  # (T, 2)
+        T_frames = rhand_trans_padded.shape[0]
+        cam_center = torch.tensor(res_dict['intrins'][2:][None]).repeat(T_frames, 1)  # (T, 2)
+        cam_f = torch.tensor(res_dict['intrins'][:2][None]).repeat(T_frames, 1)  # (T, 2)
 
         init_dict = {
                     "keyp2d": obs_data['joints2d'][idx],
@@ -754,7 +735,7 @@ def multi_stage_opt(opt, device, obs_data, res_dict, hand_model, config_f, exp_s
 
         shutil.copy2(config_f, args.save_path)
         
-        data['betas'] = data['betas'][None].repeat(128, 1)
+        data['betas'] = data['betas'][None].repeat(data['trans'].shape[0], 1)
 
         for k, v in data.items():
             if k in IGNORE_KEYS:
@@ -861,10 +842,12 @@ def multi_stage_opt(opt, device, obs_data, res_dict, hand_model, config_f, exp_s
         # vis
         is_right = target['is_right'].clone()
         rh_mano_out = pred_mano(hand_model, T, R, P, is_right, Be, only_right=False) 
-        joints3d_pred = rh_mano_out['joints3d'].view(1, 128, -1, 3)
-        vertices_pred = rh_mano_out['verts3d'].view(1, 128, -1, 3)
+        joints3d_pred = rh_mano_out['joints3d']
+        vertices_pred = rh_mano_out['verts3d']
+        _cam_f = target['cam_f'][:joints3d_pred.shape[1]] if target['cam_f'].shape[0] > joints3d_pred.shape[1] else target['cam_f']
+        _cam_center = target['cam_center'][:joints3d_pred.shape[1]] if target['cam_center'].shape[0] > joints3d_pred.shape[1] else target['cam_center']
         joints2d_pred = reproject(
-                joints3d_pred, target['cam_R'], target['cam_t'], target['cam_f'], target['cam_center']
+                joints3d_pred, target['cam_R'], target['cam_t'], _cam_f, _cam_center
             )
 
         R_list.append(R.detach().cpu().numpy())
@@ -874,18 +857,41 @@ def multi_stage_opt(opt, device, obs_data, res_dict, hand_model, config_f, exp_s
         DR_list.append(DR.detach().cpu().numpy())
 
     save_keys = ['root_orient', 'trans', 'latent_pose', 'is_right', 'init_body_pose', 'world_scale', 'betas', 'pose_body', 'cam_R', 'cam_t', 'intrins']
-    R_list = np.vstack(R_list)
-    T_list = np.vstack(T_list)
-    P_list = np.vstack(P_list)
-    Be_list = np.vstack(Be_list)
-    DR_list = np.vstack(DR_list)
-    res_dict['root_orient'] = R_list
-    res_dict['trans'] = T_list
-    res_dict['latent_pose'] = P_list
-    num_hands = len(P_list)
-    res_dict['pose_body'] = P_list.reshape(num_hands, 128, 15, 3)
-    res_dict['betas'] = Be_list
-    res_dict['decode_root'] = DR_list
+
+    # Reassemble overlapping chunks back to full sequence for each hand
+    orig_len = args.orig_seq_len
+    overlap = args.overlap_len if hasattr(args, 'overlap_len') else 0
+    seq_intervals = compute_seq_intervals(orig_len, 128, overlap) if overlap > 0 else None
+    num_hands = len(R_list)
+
+    def dechunk(chunks_np):
+        """Reassemble (B_chunks, 128, ...) back to (orig_len, ...)"""
+        if chunks_np.shape[0] == 1 and chunks_np.shape[1] >= orig_len:
+            return chunks_np[0, :orig_len]
+        if seq_intervals is None:
+            return chunks_np.reshape(-1, *chunks_np.shape[2:])[:orig_len]
+        parts = []
+        for i, (s, e) in enumerate(seq_intervals):
+            chunk_len = e - s
+            if i == 0:
+                parts.append(chunks_np[i, :chunk_len])
+            else:
+                skip = overlap
+                parts.append(chunks_np[i, skip:chunk_len])
+        return np.concatenate(parts, axis=0)[:orig_len]
+
+    R_reassembled = np.stack([dechunk(r) for r in R_list])  # (num_hands, orig_len, 3)
+    T_reassembled = np.stack([dechunk(t) for t in T_list])  # (num_hands, orig_len, 3)
+    P_reassembled = np.stack([dechunk(p) for p in P_list])  # (num_hands, orig_len, 45)
+    Be_reassembled = np.stack([be[0] if be.ndim > 1 else be for be in Be_list])  # (num_hands, 10)
+    DR_reassembled = np.stack([dechunk(dr) for dr in DR_list])
+
+    res_dict['root_orient'] = R_reassembled
+    res_dict['trans'] = T_reassembled
+    res_dict['latent_pose'] = P_reassembled
+    res_dict['pose_body'] = P_reassembled.reshape(num_hands, orig_len, 15, 3)
+    res_dict['betas'] = Be_reassembled
+    res_dict['decode_root'] = DR_reassembled
     pred_save_path = os.path.join(args.save_path, os.path.basename(args.vid_path).split('.')[0] + f'_000000_world_results.npz')
 
     for i in res_dict.keys():
@@ -1088,6 +1094,12 @@ def latent_optimization(hand_model, target, T=None, z_l=None, z_g=None, pose=Non
 
 def optim_step_new(hand_model, stg_conf, stg_id, z_l, z_g, betas, target, B,
                seqlen, trans, root_orient, init_z_l, mean_betas, T, cam_R, cam_t, cam_f, cam_center, is_right, vis_mask=None, pose=None):
+    # Truncate cam_f and cam_center to match chunk seqlen (they may be full-length if not chunked)
+    if cam_f.shape[0] > seqlen:
+        cam_f = cam_f[:seqlen]
+    if cam_center.shape[0] > seqlen:
+        cam_center = cam_center[:seqlen]
+
     def closure():
         optimizer.zero_grad()
 
@@ -1115,10 +1127,10 @@ def optim_step_new(hand_model, stg_conf, stg_id, z_l, z_g, betas, target, B,
         local_rotmat = local_rotmat.view(B*args.nsubject, -1, HAND_JOINT_NUM, 3, 3) # (B x T, J, 3, 3)
         body_pose = matrix_to_axis_angle(local_rotmat)[:, :, 1:]
 
-        rh_mano_out = pred_mano(hand_model, output['trans'], matrix_to_axis_angle(rotation_6d_to_matrix(root_orient)), body_pose.reshape(1, 128, 45), is_right, betas, only_right=False) 
+        rh_mano_out = pred_mano(hand_model, output['trans'], matrix_to_axis_angle(rotation_6d_to_matrix(root_orient)), body_pose.reshape(body_pose.shape[0], body_pose.shape[1], -1), is_right, betas, only_right=False)
 
-        joints3d = rh_mano_out['joints3d'].view(B, seqlen, -1, 3)
-        vertices3d = rh_mano_out['verts3d'].view(B, seqlen, -1, 3)
+        joints3d = rh_mano_out['joints3d']
+        vertices3d = rh_mano_out['verts3d']
 
         # print(joints3d.shape, cam_R.shape)
         joints2d_pred = reproject(
@@ -1168,8 +1180,7 @@ def optim_step_new(hand_model, stg_conf, stg_id, z_l, z_g, betas, target, B,
             loss_dict['rot'] = stg_conf.lambda_rot * rot_loss
 
         if stg_conf.lambda_bio > 0:
-            assert len(output['joints3d']) == 1
-            joints = output['joints3d'][0]  # (128,21,3)
+            joints = output['joints3d'].reshape(-1, output['joints3d'].shape[-2], 3)  # (B*T, 21, 3)
             loss_total, _ = bmc.compute_loss(joints)
             # print("loss_total=", loss_total)
             # print("loss_dict=", loss_dict)
@@ -1341,6 +1352,12 @@ def optim_step_new(hand_model, stg_conf, stg_id, z_l, z_g, betas, target, B,
 def optim_step(hand_model, stg_conf, stg_id, z_l, z_g, betas, target, B,
                seqlen, trans, root_orient, init_z_l, mean_betas, T, cam_R, cam_t, cam_f, cam_center, is_right, vis_mask=None, pose=None):
 
+    # Truncate cam_f and cam_center to match chunk seqlen (they may be full-length if not chunked)
+    if cam_f.shape[0] > seqlen:
+        cam_f = cam_f[:seqlen]
+    if cam_center.shape[0] > seqlen:
+        cam_center = cam_center[:seqlen]
+
     logger.info(f'Running optimization stage {stg_id+1} ...')
     opt_params = []
     for param in stg_conf.opt_params:
@@ -1363,7 +1380,7 @@ def optim_step(hand_model, stg_conf, stg_id, z_l, z_g, betas, target, B,
         param.requires_grad = True
         
     optimizer = torch.optim.Adam(opt_params, lr=stg_conf.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.scheduler.step_size, args.scheduler.gamma, verbose=False)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.scheduler.step_size, args.scheduler.gamma)
 
     def mask_data(data, mask):
         ml = len(mask.shape)
@@ -1405,10 +1422,10 @@ def optim_step(hand_model, stg_conf, stg_id, z_l, z_g, betas, target, B,
         local_rotmat = local_rotmat.view(B*args.nsubject, -1, HAND_JOINT_NUM, 3, 3) # (B x T, J, 3, 3)
         body_pose = matrix_to_axis_angle(local_rotmat)[:, :, 1:]
 
-        rh_mano_out = pred_mano(hand_model, output['trans'], matrix_to_axis_angle(rotation_6d_to_matrix(root_orient)), body_pose.reshape(1, 128, 45), is_right, betas, only_right=False) 
+        rh_mano_out = pred_mano(hand_model, output['trans'], matrix_to_axis_angle(rotation_6d_to_matrix(root_orient)), body_pose.reshape(body_pose.shape[0], body_pose.shape[1], -1), is_right, betas, only_right=False)
 
-        joints3d = rh_mano_out['joints3d'].view(B, seqlen, -1, 3)
-        vertices3d = rh_mano_out['verts3d'].view(B, seqlen, -1, 3)
+        joints3d = rh_mano_out['joints3d']
+        vertices3d = rh_mano_out['verts3d']
 
         # print(joints3d.shape, cam_R.shape)
         joints2d_pred = reproject(
@@ -1458,8 +1475,7 @@ def optim_step(hand_model, stg_conf, stg_id, z_l, z_g, betas, target, B,
             loss_dict['rot'] = stg_conf.lambda_rot * rot_loss
 
         if stg_conf.lambda_bio > 0:
-            assert len(output['joints3d']) == 1
-            joints = output['joints3d'][0]  # (128,21,3)
+            joints = output['joints3d'].reshape(-1, output['joints3d'].shape[-2], 3)  # (B*T, 21, 3)
             loss_total, _ = bmc.compute_loss(joints)
             # print("loss_total=", loss_total)
             # print("loss_dict=", loss_dict)

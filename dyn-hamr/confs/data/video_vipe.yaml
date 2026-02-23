@@ -1,6 +1,6 @@
 type: video
 split: custom
-root: /data/home/zy3023/code/hand/Dyn-HaMR/test  # put your videos in root/videos/vid.mp4
+root: /home/deepreach/Zekai_code/Dyn-HaMR/test  # put your videos in root/videos/vid.mp4
 video_dir: videos
 seq: prod1
 ext: mp4
@@ -10,6 +10,7 @@ frame_opts:
   fps: 25
   start_sec: 0
   end_sec: -1
+  down_scale: 1
 use_cams: True
 track_ids: "all"
 shot_idx: 0
@@ -25,5 +26,5 @@ sources:
 
 # VIPE-specific options
 use_vipe: True
-vipe_dir: /data/home/zy3023/code/hand/Dyn-HaMR/third-party/vipe/vipe_results
+vipe_dir: /home/deepreach/Zekai_code/Dyn-HaMR/third-party/vipe/vipe_results
 

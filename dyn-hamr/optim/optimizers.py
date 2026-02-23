@@ -93,6 +93,19 @@ class StageOptimizer(object):
             self.model.params.load_dict(param_dict)
             Logger.log(f"Params loaded from {param_path}")
 
+            # Re-set requires_grad and re-capture parameter references
+            # (load_dict creates new nn.Parameter objects with requires_grad=False)
+            self.model.params.set_require_grads(self.param_names)
+            self.opt_params = [
+                getattr(self.model.params, name) for name in self.param_names
+            ]
+            # Re-create optimizer with new parameter references
+            old_lr = self.optim.defaults['lr']
+            old_max_iter = self.optim.defaults['max_iter']
+            self.optim = torch.optim.LBFGS(
+                self.opt_params, max_iter=old_max_iter, lr=old_lr, line_search_fn=LINE_SEARCH
+            )
+
         optim_path = os.path.join(out_dir, f"{self.name}_optim.pth")
         if os.path.isfile(optim_path):
             optim_dict = torch.load(optim_path)

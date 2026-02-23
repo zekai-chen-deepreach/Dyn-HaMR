@@ -19,8 +19,7 @@ def preprocess_frames(img_dir, src_path, overwrite=False, **kwargs):
     print(f"EXTRACTING FRAMES FROM {src_path} TO {img_dir}")
     print(kwargs)
 
-    # out = video_to_frames(src_path, img_dir, overwrite=overwrite, **kwargs)
-    out = split_frame(src_path, img_dir, overwrite=overwrite, **kwargs)
+    out = video_to_frames(src_path, img_dir, overwrite=overwrite, **kwargs)
     assert out == 0, "FAILED FRAME EXTRACTION"
 
 
@@ -88,10 +87,9 @@ def load_vipe_cameras(vipe_dir, seq_name, img_dir, start=0, end=-1):
     assert np.array_equal(pose_inds, intrins_inds), "Pose and intrinsics indices don't match!"
     
     # Get image size from first image
-    image_files = sorted([f for f in os.listdir(img_dir) 
+    image_files = sorted([f for f in os.listdir(img_dir)
                          if f.endswith(('.png', '.jpg', '.jpeg'))])
     if not image_files:
-        # Infer from intrinsics (cx, cy should be roughly at center)
         img_width = int(intrins[0, 2] * 2)
         img_height = int(intrins[0, 3] * 2)
         print(f"Inferred image size from intrinsics: {img_width}x{img_height}")
@@ -100,23 +98,42 @@ def load_vipe_cameras(vipe_dir, seq_name, img_dir, start=0, end=-1):
         img = cv2.imread(img_path)
         img_height, img_width = img.shape[:2]
         print(f"Got image size from images: {img_width}x{img_height}")
+
+    # Auto-scale intrinsics if VIPE ran at a different resolution than frames
+    vipe_width = intrins[0, 2] * 2  # cx is roughly at image center
+    if abs(vipe_width - img_width) > 10:
+        scale = img_width / vipe_width
+        print(f"Scaling VIPE intrinsics by {scale:.2f}x ({int(vipe_width)}px -> {img_width}px)")
+        intrins = intrins * scale
     
+    # Pad VIPE results to match frame count if needed (VIPE may produce fewer frames)
+    n_images = len(image_files) if image_files else len(c2w)
+    if len(c2w) < n_images:
+        pad_n = n_images - len(c2w)
+        print(f"Padding VIPE cameras from {len(c2w)} to {n_images} frames (+{pad_n})")
+        c2w = np.concatenate([c2w, np.tile(c2w[-1:], (pad_n, 1, 1))], axis=0)
+        intrins = np.concatenate([intrins, np.tile(intrins[-1:], (pad_n, 1))], axis=0)
+
     # Select frames based on start/end
     if end < 0:
         end = len(c2w)
     c2w = c2w[start:end]
     intrins = intrins[start:end]
-    
+
+    # Ensure float32 for compatibility with the rest of the pipeline
+    c2w = c2w.astype(np.float32)
+    intrins = intrins.astype(np.float32)
+
     # Convert camera-to-world to world-to-camera
     w2c = np.linalg.inv(c2w)
-    
+
     # Add width and height to intrinsics
     N = len(w2c)
     intrins_full = np.zeros((N, 6), dtype=np.float32)
     intrins_full[:, :4] = intrins
     intrins_full[:, 4] = img_width
     intrins_full[:, 5] = img_height
-    
+
     print(f"Loaded {N} VIPE camera poses")
     return w2c, intrins_full
 

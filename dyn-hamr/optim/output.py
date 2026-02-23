@@ -173,7 +173,7 @@ def save_camera_json(path, cam_R, cam_t, intrins):
     :param intrins (N, 4)
     """
     N = len(cam_R)
-    T = torch.tensor([[1, 0, 0], [0, -1, 0], [0, 0, -1]], dtype=torch.float32)
+    T = torch.tensor([[1, 0, 0], [0, -1, 0], [0, 0, -1]], dtype=cam_R.dtype)
     cam_R = torch.einsum("ij,bjk->bik", T, cam_R)
     cam_t = torch.einsum("ij,bj->bi", T, cam_t)
     with open(path, "w") as f:

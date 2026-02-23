@@ -46,7 +46,7 @@ paths:
 HMP:
   config: hmp_config.yaml
   use_hposer: False
-  vid_path: ${data.root}/video/${data.seq}.mp4
+  vid_path: ${data.root}/images/${data.seq}
   exp_name: None
 
 fps: 30
