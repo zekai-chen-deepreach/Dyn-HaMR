@@ -363,15 +363,27 @@ class StageOptimizer(object):
         # Normalize axis-angle parameters to [-pi, pi] after each LBFGS step
         # This prevents the optimizer from drifting into equivalent but numerically
         # distant representations (e.g. angle > pi wraps to -(2pi - angle))
+        # Applied to root_orient and latent_pose (finger joints)
         with torch.no_grad():
             PI = 3.141592653589793
             for name in self.param_names:
-                if name in ("root_orient",):
-                    param = getattr(self.model.params, name)  # (B, T, 3)
-                    angle = torch.norm(param, dim=-1, keepdim=True)  # (B, T, 1)
-                    angle_wrapped = angle - 2 * PI * torch.round(angle / (2 * PI))
-                    scale = torch.where(angle > 1e-8, angle_wrapped / angle, torch.ones_like(angle))
-                    param.data.mul_(scale)
+                if name in ("root_orient", "latent_pose"):
+                    param = getattr(self.model.params, name)
+                    if name == "latent_pose":
+                        # latent_pose is (B, T, 15, 3) - per-joint axis-angle
+                        orig_shape = param.shape
+                        flat = param.data.reshape(-1, 3)  # (B*T*15, 3)
+                        angle = torch.norm(flat, dim=-1, keepdim=True)
+                        angle_wrapped = angle - 2 * PI * torch.round(angle / (2 * PI))
+                        scale = torch.where(angle > 1e-8, angle_wrapped / angle, torch.ones_like(angle))
+                        flat.mul_(scale)
+                        param.data = flat.reshape(orig_shape)
+                    else:
+                        # root_orient is (B, T, 3)
+                        angle = torch.norm(param, dim=-1, keepdim=True)
+                        angle_wrapped = angle - 2 * PI * torch.round(angle / (2 * PI))
+                        scale = torch.where(angle > 1e-8, angle_wrapped / angle, torch.ones_like(angle))
+                        param.data.mul_(scale)
 
         if writer is not None:
             self.record_current_losses(writer)
