@@ -359,6 +359,23 @@ class StageOptimizer(object):
         #print('!!!!!!!!!!!!!!!!!!!!!!!!!!', i)
         self.optim.step(closure)
         #print('!!!!!!!!!!!!!!!!!!!!!!!!!!', i)
+
+        # Normalize axis-angle parameters to [-pi, pi] after each LBFGS step
+        # This prevents the optimizer from drifting into equivalent but numerically
+        # distant representations (e.g. angle > pi wraps to -(2pi - angle))
+        with torch.no_grad():
+            for name in self.param_names:
+                if name in ("root_orient",):
+                    param = getattr(self.model.params, name)  # (B, T, 3)
+                    # axis-angle: angle = ||v||, axis = v/||v||
+                    angle = torch.norm(param, dim=-1, keepdim=True)  # (B, T, 1)
+                    # Wrap angle to [-pi, pi]
+                    # angle_wrapped = angle - 2*pi * round(angle / 2*pi)
+                    angle_wrapped = angle - 2 * 3.141592653589793 * torch.round(angle / (2 * 3.141592653589793))
+                    # Reconstruct: keep axis direction, use wrapped angle
+                    scale = torch.where(angle > 1e-8, angle_wrapped / angle, torch.ones_like(angle))
+                    param.data.mul_(scale)
+
         if writer is not None:
             self.record_current_losses(writer)
 
