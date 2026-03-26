@@ -29,10 +29,10 @@ def launch_hamer(gpus, seq, img_dir, res_dir, name, datatype, overwrite=False):
         "python -u run.py",
         f"--img_folder {img_dir} ",
         f"--res_folder {res_dir}/demo_{name}.pkl ",
-        f"--batch_size=48 --side_view --save_mesh --full_frame",
+        f"--batch_size=48 --full_frame",
         f"--type {datatype}",
         f"--checkpoint {ROOT_DIR}",
-        "--render"
+        "--no_viz"
     ]
 
     cmd = " ".join(cmd_args)

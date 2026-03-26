@@ -8,7 +8,6 @@ import subprocess
 from body_model import run_mano
 from geometry import camera as cam_util
 from geometry.mesh import make_batch_mesh, save_mesh_scenes
-from geometry.plane import parse_floor_plane, get_plane_transform
 
 from util.tensor import detach_all, to_torch, move_to
 
@@ -86,43 +85,6 @@ def build_scene_dict(
         "src_cam": T_c2w,
         # "front": torch.einsum("ij,...jk->...ik", T, T_c2w),
     }
-
-    # Create ground plane based on hand mesh height
-    # DISABLED: Ground plane visualization disabled to better see coordinate system
-    # verts = scene_dict["geometry"][0]  # Get vertices from geometry
-    # if len(verts) > 0:
-    #     # Find minimum height across all frames and vertices
-    #     min_height = float('inf')
-    #     for frame_verts in verts:
-    #         if len(frame_verts) > 0:
-    #             frame_min = frame_verts[..., 1].min().item()  # y-coordinate is height
-    #             min_height = min(min_height, frame_min)
-    #     
-    #     # Set ground plane further below minimum height
-    #     ground_offset = -0.5  # 20cm below minimum height
-    #     ground_height = min_height - ground_offset
-    #     
-    #     # Create ground plane transform
-    #     R = torch.eye(3)  # Identity rotation (flat ground)
-    #     t = torch.tensor([0.0, ground_height, 0.0])  # Translate to ground height
-    #     scene_dict["ground"] = cam_util.make_4x4_pose(R, t)
-    #
-    #     # Save ground mesh for Blender debugging
-    #     import trimesh
-    #     from vis.viewer import make_checkerboard
-    #     ground_mesh = make_checkerboard(color0=[0.9, 0.95, 1.0], color1=[0.7, 0.8, 0.85], up="y", alpha=1.0)
-    #     ground_mesh.apply_translation([0.0, ground_height, 0.0])
-    #     ground_mesh.export("ground_debug.obj")
-
-    # if floor_plane is not None:
-    #     # compute the ground transform
-    #     # use the first appearance of a track as the reference point
-    #     tid, sid = torch.where(vis_mask > 0)
-    #     idx = tid[torch.argmin(sid)]
-    #     root = world_smpl["joints"][idx, 0, 0].detach().cpu()
-    #     floor = parse_floor_plane(floor_plane.detach().cpu())
-    #     R, t = get_plane_transform(torch.tensor([0.0, 1.0, 0.0]), floor, root)
-    #     scene_dict["ground"] = cam_util.make_4x4_pose(R, t)
 
     return scene_dict
 
@@ -270,8 +232,14 @@ def build_pyrender_scene(
 
     vis.clear_meshes()
 
-    if "ground" in scene:
-        vis.set_ground(scene["ground"])
+    # Compute ground plane position from mesh bounding box
+    if bounds is not None:
+        bb_min, bb_max, center = bounds
+        ground_height = bb_min[1].item() - 0.05  # 5cm below lowest hand vertex
+        ground_pose = np.eye(4)
+        ground_pose[1, 3] = ground_height
+        vis.scene.set_pose(vis.ground_node, pose=ground_pose)
+        scene["ground"] = True  # enable ground rendering in animate_scene
 
     if debug:
         skip = 10

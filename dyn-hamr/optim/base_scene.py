@@ -60,12 +60,8 @@ class BaseSceneModel(nn.Module):
         self.num_betas = body_model.num_betas
 
         self.use_init = use_init
-        print("USE INIT", use_init)
         self.opt_scale = opt_scale
         self.opt_cams = opt_cams
-        print("OPT SCALE", self.opt_scale)
-        print("OPT CAMERAS", self.opt_cams)
-        print("Batch size: ", batch_size)
         self.params = CameraParams(batch_size)
 
     def initialize(self, obs_data, cam_data):
@@ -100,7 +96,6 @@ class BaseSceneModel(nn.Module):
         if self.use_init and "init_root_orient" in obs_data:
             init_rot = obs_data["init_root_orient"]  # (B, T, 3)
             init_rot_mat = angle_axis_to_rotation_matrix(init_rot)
-            print(R_c2w.shape, init_rot_mat.shape)
             init_rot_mat = torch.einsum("tij,btjk->btik", R_c2w, init_rot_mat)
             init_rot = rotation_matrix_to_angle_axis(init_rot_mat)
         else:
@@ -150,7 +145,6 @@ class BaseSceneModel(nn.Module):
         """
         Collect predicted outputs (latent_pose, trans, root_orient, betas, body pose) into dict
         """
-        print('running get_optim_result in base_scene.py...')
         res = self.params.get_dict()
         if "latent_pose" in res:
             res["pose_body"] = self.latent2pose(self.params.latent_pose).detach()

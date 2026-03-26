@@ -435,9 +435,6 @@ class OffscreenAnimation(AnimationBase):
                     imageio.imwrite(path, frame)
                 return save_name
             save_path = f"{save_name}.{self.ext}"
-            os.makedirs(save_name, exist_ok=True)
-            for idx, i in enumerate(frames):
-                imageio.imwrite(f"{save_name}/" + f'{str(idx).zfill(6)}.jpg', i[:, :, :3])
             imageio.mimwrite(save_path, frames, fps=self.fps)
             print("wrote video to", save_path)
             return save_path

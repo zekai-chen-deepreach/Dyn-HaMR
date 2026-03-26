@@ -20,7 +20,6 @@ class Params(nn.Module):
         self.param_names = set()
 
     def set_param(self, name, val, requires_grad=False):
-        print("SETTING PARAM", name, val.shape)
         with torch.no_grad():
             setattr(
                 self, name, nn.Parameter(val.contiguous(), requires_grad=requires_grad)
@@ -117,10 +116,8 @@ class CameraParams(Params):
             init_delta_R = torch.zeros(T, 3, device=device)
             init_delta_t = torch.zeros(T, 3, device=device)
             if "delta_cam_R" in kwargs:
-                print("setting delta_cam_R from kwargs")
                 init_delta_R = kwargs["delta_cam_R"]
             if "delta_cam_t" in kwargs:
-                print("setting delta_cam_t from kwargs")
                 init_delta_t = kwargs["delta_cam_t"]
 
             self.set_param("delta_cam_R", init_delta_R)
@@ -135,7 +132,6 @@ class CameraParams(Params):
         returns (T, 3, 3), (T, 3)
         """
         cam_R, cam_t = self._cam_R, self._cam_t
-        print('get_extrinsics')
         if self.opt_cams:
             raise ValueError
             print('self.opt_cams:', self.opt_cams)

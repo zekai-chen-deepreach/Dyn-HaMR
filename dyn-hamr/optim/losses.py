@@ -344,7 +344,6 @@ class StageLoss(nn.Module):
         super().__init__()
         self.cur_optim_step = 0
         self.set_loss_weights(loss_weights)
-        print(kwargs)
         self.setup_losses(loss_weights, **kwargs)
 
     def setup_losses(self, *args, **kwargs):
@@ -495,7 +494,6 @@ class RootLoss(StageLoss):
             loss += self.loss_weights["depth_constraint"] * cur_loss
             stats_dict["depth_constraint"] = cur_loss
 
-        print(stats_dict)
         return loss, stats_dict
 
 
@@ -574,17 +572,10 @@ class SMPLLoss(RootLoss):
         )
 
         # prior to keep latent pose likely
-        print(f"DEBUG pose_prior check: 'latent_pose' in pred_data = {'latent_pose' in pred_data}, loss_weight = {self.loss_weights.get('pose_prior', 'NOT_FOUND')}")
-        if "latent_pose" in pred_data:
-            print(f"  latent_pose shape: {pred_data['latent_pose'].shape}")
-        if "init_latent_pose" in observed_data:
-            print(f"  init_latent_pose shape: {observed_data['init_latent_pose'].shape}")
-        
         if "latent_pose" in pred_data and self.loss_weights["pose_prior"] > 0.0:
             # Use initial latent pose from HaMeR as the prior target
             latent_pose_init = observed_data["init_latent_pose"]
             cur_loss = pose_prior_loss(pred_data["latent_pose"], latent_pose_init, valid_mask)
-            print("pose_prior: ", cur_loss, pred_data["latent_pose"][0],latent_pose_init[0])
             loss += self.loss_weights["pose_prior"] * cur_loss
             stats_dict["pose_prior"] = cur_loss
         else:
@@ -598,7 +589,6 @@ class SMPLLoss(RootLoss):
 
         # inter-penetration loss
         if 'verts3d' in pred_data and self.loss_weights["penetration"] > 0.0:
-            print('???????????????????????????????? inter-penetration loss')
             # print(pred_data["verts3d"].shape, pred_data['is_right'].shape)
             order = torch.sum(pred_data['is_right'], dim=-1)//pred_data['is_right'].shape[1]
 
@@ -617,7 +607,6 @@ class SMPLLoss(RootLoss):
                 loss += self.loss_weights["penetration"] * cur_loss
                 stats_dict["penetration"] = cur_loss
 
-        print(stats_dict)
         # if 'penetration' in stats_dict.keys():
         #     if stats_dict['penetration'] == 0:
         #         print(pred_data)

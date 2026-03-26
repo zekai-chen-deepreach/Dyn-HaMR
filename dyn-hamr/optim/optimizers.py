@@ -116,12 +116,6 @@ class StageOptimizer(object):
     def save_checkpoint(self, out_dir):
         param_path = os.path.join(out_dir, f"{self.name}_params.pth")
         param_dict = self.model.params.get_dict()
-        if "world_scale" in param_dict:
-            print("WORLD_SCALE", param_dict["world_scale"].detach().cpu())
-        if "floor_plane" in param_dict:
-            print("FLOOR PLANE", param_dict["floor_plane"].detach().cpu())
-        if "cam_f" in param_dict:
-            print("CAM_F", param_dict["cam_f"].detach().cpu())
         torch.save(param_dict, param_path)
         Logger.log(f"Model saved at {param_path}")
 
@@ -140,18 +134,14 @@ class StageOptimizer(object):
         os.makedirs(out_dir, exist_ok=True)
 
         with torch.no_grad():
-            print('go into get_optim_result from optimizer.py save_results')
             pred_dict = self.model.get_optim_result()
         pred_dict = move_to(detach_all(pred_dict), "cpu")
 
         i = self.cur_step
         for name, results in pred_dict.items():
-            print('save_results, name: ', name)
-            # save parameters of trajectory
             out_path = f"{out_dir}/{seq_name}_{i:06d}_{name}_results.npz"
             Logger.log(f"saving params to {out_path}")
             np.savez(out_path, **results)
-            print('cam_R in save_results and its .npz', results['cam_R'])
 
         # also save the cameras
         # print('save the cameras in ptimizer.py save_results')
@@ -167,8 +157,7 @@ class StageOptimizer(object):
         #     intrins.detach().cpu(),
         # )
 
-        # plot losses
-        self.plot_losses(out_dir)
+        # plot_losses skipped to reduce output
 
     # def save_meshes_all(self, res_dir, obs_data, seq_name, num_steps=-1):
 
@@ -233,7 +222,6 @@ class StageOptimizer(object):
         seq_name = obs_data["seq_name"][0]
         res_pre = f"{res_dir}/{seq_name}_opt_{self.cur_step:06d}"
         with torch.no_grad():
-            print('go into get_optim_result from optimizer.py vis_result')
             pred_dict = self.model.get_optim_result(num_steps=num_steps)
 
         res_dict = detach_all(pred_dict["world"])
@@ -307,21 +295,8 @@ class StageOptimizer(object):
         Logger.log(f"OPTIMIZING {self.name} FOR {num_iters} ITERATIONS")
         # time.sleep(5)
 
-        # save initial results and vis
-        print('go into save_results in optimizers.py run()')
-        self.save_results(res_dir, seq_name)
-
         for i in range(self.cur_step, num_iters):
             Logger.log("ITER: %d" % (i))
-
-            if (i + 1) % self.save_every == 0:  # save before
-                self.save_checkpoint(out_dir)
-                self.save_results(res_dir, seq_name)
-            else:
-                self.save_checkpoint(out_dir)
-
-            if (i + 1) % self.vis_every == 0:  # render
-                self.vis_result(res_dir, obs_data, vis)
 
             self.cur_step = i
             self.loss.cur_step = i
@@ -355,12 +330,10 @@ class StageOptimizer(object):
                 self.last_updated = i
             self.prev_loss = self.cur_loss
 
-        # final save and vis step
+        # final save only
         self.cur_step = num_iters
         self.save_checkpoint(out_dir)
         self.save_results(res_dir, seq_name)
-        self.vis_result(res_dir, obs_data, vis)
-        # self.save_meshes_all(res_dir, obs_data, seq_name)
 
     def optim_step(self, obs_data, i, writer=None):
         def closure():
@@ -379,7 +352,6 @@ class StageOptimizer(object):
                     self.cur_loss
                     - 0.04 * stats_dict["pose_prior"].detach().cpu().item()
                 )
-            print("optimizer print", loss, loss.shape, stats_dict, loss.requires_grad)
             loss.backward()
             # print('end of loss backward')
             return loss

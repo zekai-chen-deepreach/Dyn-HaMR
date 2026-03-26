@@ -11,7 +11,7 @@ model:
 
 overwrite: False
 run_opt: True
-run_vis: True
+run_vis: False
 run_prior: False
 datatype: ${data.video_dir}
 vis:
@@ -50,7 +50,7 @@ HMP:
   exp_name: None
 
 fps: 30
-log_root: ../outputs/logs
+log_root: /home/deepreach/Zekai_code/asi-human-data/thirdparty/dynhamr/outputs/logs
 log_dir: ${log_root}/${data.type}-${data.split}
 exp_name: ${now:%Y-%m-%d}
 temporal_smooth: True

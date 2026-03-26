@@ -5,7 +5,7 @@ optim:
     joints2d_sigma: 100.0
     lr: 1.0
     lbfgs_max_iter: 20
-    save_every: 20
+    save_every: 9999
     vis_every: -1
     max_chunk_steps: 20
     save_meshes: False

@@ -44,8 +44,7 @@ Dyn-HaMR/
 │       ├── root_fit/                  #   root 阶段优化参数
 │       └── smooth_fit/                #   smooth 阶段优化参数
 └── _DATA/                             # 模型权重
-    ├── data/mano/                     #   MANO 模型
-    └── hmp_model/                     #   HMP motion prior（可选）
+    └── data/mano/                     #   MANO 模型
 ```
 
 ## 完整流程
@@ -91,8 +90,8 @@ python run_opt.py data=video_vipe data.seq=<seq> run_opt=False run_vis=False
 conda activate vipe
 cd Dyn-HaMR/third-party/vipe
 
-# VIPE_LITE=1 跳过深度模型（防止高分辨率 OOM），只保存 pose + intrinsics
-VIPE_LITE=1 vipe infer test/videos/<seq>.mp4 -o vipe_results/
+# -p dynhamr: 使用精简 pipeline（跳过分割/深度模型，只输出 pose + intrinsics）
+vipe infer test/videos/<seq>.mp4 -o vipe_results/ -p dynhamr
 ```
 
 输出：
@@ -104,61 +103,32 @@ VIPE_LITE=1 vipe infer test/videos/<seq>.mp4 -o vipe_results/
 
 ---
 
-### Stage 3: 优化（root_fit + smooth_fit）
+### Stage 3: 优化 + 可视化
 
 ```bash
 conda activate dynhamr
 cd Dyn-HaMR/dyn-hamr
 
-python run_opt.py \
-    data=video_vipe \
-    data.seq=<seq> \
-    run_opt=True \
-    run_vis=False \
-    is_static=False \
-    run_prior=False
+python run_opt.py data=video_vipe data.seq=<seq>
 ```
 
-- `root_fit`：50 iterations，初始化全局位移和尺度
-- `smooth_fit`：300 iterations，联合优化手部 pose + 平滑约束
+自动执行：
+1. `root_fit`：50 iterations，初始化全局位移和尺度
+2. `smooth_fit`：300 iterations，联合优化手部 pose + 平滑约束
+3. 可视化：生成四宫格视频和各视角视频
 
 输出保存到 `outputs/logs/video-custom/<date>/<seq>-all-shot-0-0--1/`
-
----
-
-### Stage 4: 可视化
-
-```bash
-python run_opt.py \
-    data=video_vipe \
-    data.seq=<seq> \
-    run_opt=False \
-    run_vis=True \
-    is_static=False \
-    run_prior=False
-```
 
 生成视频：
 - `*_smooth_fit_grid.mp4` — 四宫格：输入 + above/side/front 3D 视角
 - `*_smooth_fit_final_000300_src_cam.mp4` — 原视角手部叠加
-- `*_smooth_fit_final_000300_{above,side,front}.mp4` — 单独 3D 视角
+- `*_smooth_fit_final_000300_{above,side,front}.mp4` — 单独 3D 视角（含棋盘格地面）
 
----
+3D 视角（above/side/front）会自动渲染棋盘格地面，地面高度为手部最低顶点下方 5cm。原视角（src_cam）不渲染地面，保留原始视频背景。
 
-### 一步到位（优化 + 可视化）
-
-```bash
-conda activate dynhamr
-cd Dyn-HaMR/dyn-hamr
-
-python run_opt.py \
-    data=video_vipe \
-    data.seq=<seq> \
-    run_opt=True \
-    run_vis=True \
-    is_static=False \
-    run_prior=False
-```
+> 也可以分步运行：
+> - 仅优化：`run_vis=False`
+> - 仅可视化（复用已有优化结果）：`run_opt=False run_vis=True`
 
 ## 关键参数
 
@@ -168,7 +138,6 @@ python run_opt.py \
 | `data.seq=<seq>` | — | 序列名（对应视频文件名，不含扩展名） |
 | `run_opt` | True | 是否运行优化 |
 | `run_vis` | True | 是否运行可视化 |
-| `run_prior` | False | 是否运行 HMP motion prior（Stage III） |
 | `is_static` | False | 相机是否静止（动态相机设 False） |
 
 ## 修改说明（相对上游）
@@ -179,14 +148,16 @@ python run_opt.py \
 - `confs/data/video_vipe.yaml`: VIPE 数据配置
 - `optim/optimizers.py`: 修复 checkpoint 恢复时 requires_grad 丢失
 - `optim/output.py`: 修复 dtype 不匹配
+- `vis/output.py`: 启用棋盘格地面渲染（根据手部 bounding box 自动定位高度）
 - `HMP/fitting.py`: 修复多 chunk 拟合、移除 StepLR verbose
 
 ### VIPE (`third-party/vipe/`)
-- `vipe/pipeline/default.py`: `VIPE_LITE=1` 跳过深度后处理
-- `vipe/utils/io.py`: `VIPE_LITE=1` 跳过 RGB/depth/mask 保存
+- `configs/pipeline/dynhamr.yaml`: 精简 pipeline 配置（跳过分割/深度模型）
+- `vipe/pipeline/default.py`: 快速路径，无需 post-processing 时直接保存 pose+intrinsics
+- `vipe/utils/io.py`: 新增 `save_pose_intrinsics_only()` 直接从 SLAM 输出保存
 
 ### HaMeR (`third-party/hamer/`)
-- `run.py`: torch.load monkey-patch（PyTorch 2.7 兼容）
+- `run.py`: torch.load monkey-patch; `--no_viz` 跳过可视化; Renderer 按需加载
 
 ## Fork 仓库
 

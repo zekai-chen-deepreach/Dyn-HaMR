@@ -7,7 +7,7 @@ ext: mp4
 src_path: ${data.root}/${data.video_dir}/${data.seq}.${data.ext}
 frame_opts:
   ext: jpg
-  fps: 25
+  fps: 30
   start_sec: 0
   end_sec: -1
   down_scale: 1

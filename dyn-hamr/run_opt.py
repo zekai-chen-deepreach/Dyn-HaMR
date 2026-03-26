@@ -15,7 +15,7 @@ def _patched_torch_load(*args, **kwargs):
     return _original_torch_load(*args, **kwargs)
 torch.load = _patched_torch_load
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+## SummaryWriter import removed to skip TensorBoard output
 
 from data import get_dataset_from_cfg, expand_source_paths
 
@@ -28,9 +28,6 @@ from optim.optimizers import (
 )
 from optim.output import (
     save_track_info,
-    save_camera_json,
-    save_input_poses,
-    save_initial_predictions,
 )
 from vis.viewer import init_viewer
 from body_model import MANO
@@ -85,14 +82,9 @@ def run_opt(cfg, dataset, out_dir, device):
 
     obs_data = move_to(next(iter(loader)), device)
     cam_data = move_to(dataset.get_camera_data(), device)
-    print("Batch size (dataset_length), T (dataset.seq_len): ", B, len(dataset), T)
-    print("OBS DATA", obs_data.keys())
-    print("CAM DATA", cam_data.keys(), 'cam_R', cam_data['cam_R'])
+    Logger.log(f"Batch size {B}, dataset_length {len(dataset)}, T {T}")
 
-    # save cameras
-    cam_R, cam_t = dataset.cam_data.cam2world()
-    intrins = dataset.cam_data.intrins
-    save_camera_json(f"cameras.json", cam_R, cam_t, intrins)
+    # save_camera_json skipped to reduce output
 
     # check whether the cameras are static
     # if static, cannot optimize scale
@@ -136,9 +128,7 @@ def run_opt(cfg, dataset, out_dir, device):
     base_model.initialize(obs_data, cam_data)
     base_model.to(device)
 
-    # save initial results for later visualization
-    save_input_poses(dataset, os.path.join(out_dir, "hamer"), args.seq)
-    save_initial_predictions(base_model, os.path.join(out_dir, "init"), args.seq)
+    # save_input_poses and save_initial_predictions skipped to reduce output
 
     opts = cfg.optim.options
     vis_scale = 0.25
@@ -153,7 +143,7 @@ def run_opt(cfg, dataset, out_dir, device):
         )
     print("OPTIMIZER OPTIONS:", opts)
 
-    writer = SummaryWriter(out_dir)
+    writer = None  # TensorBoard writer disabled to reduce output
 
     print('start optimization')
     a = time.time()

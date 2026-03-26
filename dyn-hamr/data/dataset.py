@@ -378,16 +378,13 @@ class CameraData(object):
             self.cam_t = torch.zeros(self.seq_len, 3)
 
         Logger.log(f"Images have {img_w}x{img_h}, intrins {self.intrins[0]}")
-        print("CAMERA DATA", self.cam_R.shape, self.cam_t.shape, self.intrins[0])
 
     def world2cam(self):
         return self.cam_R, self.cam_t
 
     def cam2world(self):
-        print('dataset.py, cam2world: ', self.cam_R)
         R = self.cam_R.transpose(-1, -2)
         t = -torch.einsum("bij,bj->bi", R, self.cam_t)
-        print('dataset.py, cam2world: ', R)
         return R, t
 
     def as_dict(self):

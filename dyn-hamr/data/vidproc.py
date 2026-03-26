@@ -190,7 +190,7 @@ def run_vipe(video_path, vipe_dir, vipe_root):
     if not os.path.exists(conda_sh):
         conda_sh = os.path.expanduser("~/anaconda3/etc/profile.d/conda.sh")
     
-    cmd = f"source {conda_sh} && conda activate vipe && cd {vipe_root} && vipe infer {video_path}"
+    cmd = f"source {conda_sh} && conda activate vipe && cd {vipe_root} && vipe infer {video_path} -p dynhamr"
     
     print(f"Executing: {cmd}")
     out = subprocess.call(cmd, shell=True, executable="/bin/bash")
@@ -239,7 +239,7 @@ def preprocess_cameras(cfg, overwrite=False):
                     f"Please check VIPE installation and try running manually:\n"
                     f"  conda activate vipe\n"
                     f"  cd {vipe_root}\n"
-                    f"  vipe infer {video_path}"
+                    f"  vipe infer {video_path} -p dynhamr"
                 )
         
         # Load VIPE results (after potentially running VIPE)

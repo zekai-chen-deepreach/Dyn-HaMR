@@ -12,8 +12,6 @@ from data import get_dataset_from_cfg, expand_source_paths
 from optim.output import (
     get_results_paths,
     load_result,
-    save_input_frames,
-    save_input_poses,
 )
 from util.loaders import load_config_from_log, resolve_cfg_paths
 from util.tensor import get_device, move_to, detach_all, to_torch
@@ -21,89 +19,6 @@ from vis.output import prep_result_vis, animate_scene, make_video_grid_2x2
 from vis.tools import vis_keypoints
 from vis.viewer import init_viewer
 import time
-from geometry.mesh import save_mesh_scenes, vertices_to_trimesh
-LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
-
-def save_meshes_all(cfg, dataset, res_dicts, dev_id, mesh_dirs, num_steps=-1):
-    B = len(dataset)
-    T = dataset.seq_len
-    loader = DataLoader(dataset, batch_size=B, shuffle=False)
-    device = get_device(dev_id)
-    obs_data = move_to(next(iter(loader)), device)
-
-    # load models
-    cfg = resolve_cfg_paths(cfg)
-    # Instantiate MANO model
-    mano_cfg = {k.lower(): v for k,v in dict(cfg.MANO).items()}
-    print('initializing MANO model with cfgs:', mano_cfg, 'B*T', B*T)
-    hand_model = MANO(batch_size=B*T, pose2rot=True, **mano_cfg).to(device)
-
-    for res_dict, mesh_dir in zip(res_dicts, mesh_dirs):
-        res_dict = move_to(res_dict, device)
-        scene_dict = move_to(
-            prep_result_vis(
-                res_dict,
-                obs_data["vis_mask"],
-                obs_data["track_id"],
-                hand_model,
-                temporal_smooth=cfg.temporal_smooth,
-                smooth_trans=True  # For mesh export, smooth everything
-            ),
-            "cpu",
-        )
-
-        scene_dir = mesh_dir
-        verts, joints, colors, l_faces, r_faces, is_right, bounds = scene_dict["geometry"]
-        T = len(verts)
-        print(f"{T} mesh frames for ", mesh_dir)
-        times = list(range(0, T, 1))
-        flag = False
-        for t in times:
-            if len(is_right[t]) > 1:
-                flag = True
-                vv = t
-
-        if flag:
-            init_trans = (joints[vv][0][9].clone() + joints[vv][1][9].clone()) / 2
-        else:
-            init_trans = joints[0][0][9].clone()
-
-        for t in times:
-            if len(is_right[t]) > 1:
-                assert (is_right[t].cpu().numpy().tolist() == [0,1])
-                # l_meshes = make_batch_mesh(verts[t][0][None], l_faces[t], colors[t][0][None])
-                # r_meshes = make_batch_mesh(verts[t][1][None], r_faces[t], colors[t][1][None])
-                # assert len(l_meshes) == 1
-                # assert len(r_meshes) == 1
-
-                verts[t][0] -= init_trans
-                joints[t][0] -= init_trans
-                tmesh = vertices_to_trimesh(verts[t][0].detach().cpu().numpy(), l_faces[t].detach().cpu().numpy(), LIGHT_BLUE, is_right=0)
-                tmesh.export(os.path.join(scene_dir, f'{str(t).zfill(6)}_0.obj'))
-                # np.save(f'{str(t).zfill(6)}_0.npy', joints[t][0].detach().cpu().numpy())
-
-                verts[t][1] -= init_trans
-                joints[t][1] -= init_trans
-                tmesh = vertices_to_trimesh(verts[t][1].detach().cpu().numpy(), r_faces[t].detach().cpu().numpy(), LIGHT_BLUE, is_right=1)
-                tmesh.export(os.path.join(scene_dir, f'{str(t).zfill(6)}_1.obj'))
-                # np.save(f'{str(t).zfill(6)}_1.npy', joints[t][1].detach().cpu().numpy())
-
-            else:
-                assert len(is_right[t]) == 1
-                if is_right[t] == 0:
-                    verts[t][0] -= init_trans
-                    joints[t][0] -= init_trans
-                    tmesh = vertices_to_trimesh(verts[t][0].detach().cpu().numpy(), l_faces[t].detach().cpu().numpy(), LIGHT_BLUE, is_right=0)
-                    tmesh.export(os.path.join(scene_dir, f'{str(t).zfill(6)}_0.obj'))
-                    # np.save(f'{str(t).zfill(6)}_0.npy', joints[t][0].detach().cpu().numpy())
-
-                elif is_right[t] == 1:
-                    verts[t][0] -= init_trans
-                    joints[t][0] -= init_trans
-                    tmesh = vertices_to_trimesh(verts[t][0].detach().cpu().numpy(), r_faces[t].detach().cpu().numpy(), LIGHT_BLUE, is_right=1)
-                    tmesh.export(os.path.join(scene_dir, f'{str(t).zfill(6)}_1.obj'))
-                    # np.save(f'{str(t).zfill(6)}_1.npy', joints[t][0].detach().cpu().numpy())
-
 
 def run_vis(
     cfg,
@@ -128,13 +43,7 @@ def run_vis(
     print("RENDER_KPS", render_kps)
     print("OVERWRITE", overwrite)
 
-    # save input frames
-    inp_vid_path = save_input_frames(
-        dataset,
-        f"{save_dir}/{dataset.seq_name}_input.mp4",
-        fps=cfg.fps,
-        overwrite=True,
-    )
+    # save_input_frames skipped to reduce output
 
     if render_kps:
         render_keypoints_2d(dataset, save_dir, overwrite=overwrite)
@@ -162,8 +71,6 @@ def run_vis(
             continue
 
         out_name = f"{save_dir}/{dataset.seq_name}_{phase}_final_{it}"
-        mesh_dir = f"{save_dir}/{phase}/{dataset.seq_name}_{it}_meshes"
-        os.makedirs(mesh_dir, exist_ok=True)
         phase_max_iters[phase] = it
 
         out_paths = [f"{out_name}_{view}{out_ext}" for view in render_views]
@@ -171,10 +78,10 @@ def run_vis(
             print("FOUND OUT PATHS", out_paths)
             continue
 
-        phase_results[phase] = out_name, mesh_dir, res
+        phase_results[phase] = out_name, res
 
     if len(phase_results) > 0:
-        out_names, mesh_dir, res_dicts = zip(*phase_results.values())
+        out_names, res_dicts = zip(*phase_results.values())
         render_results(
             cfg,
             dataset,
@@ -186,7 +93,6 @@ def run_vis(
             save_frames=save_frames,
             **kwargs,
         )
-        save_meshes_all(cfg, dataset, res_dicts, dev_id, mesh_dir)
 
     if make_grid:
         for phase, it in phase_max_iters.items():
@@ -203,6 +109,11 @@ def run_vis(
                 fps=cfg.fps,
                 overwrite=True,
             )
+            # Delete individual view videos after grid is created
+            for vp in vid_paths:
+                if os.path.isfile(vp):
+                    os.remove(vp)
+                    print(f"Removed {vp}")
 
 
 def get_input_dict(dataset):
