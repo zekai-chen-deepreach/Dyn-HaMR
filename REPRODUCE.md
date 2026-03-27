@@ -1,168 +1,138 @@
-# Dyn-HaMR 复现流程
+# Dyn-HaMR Pipeline
 
-基于 [Dyn-HaMR (CVPR 2025)](https://arxiv.org/abs/2412.12861) 的 4D 手部动作重建流程，使用 VIPE 替代 DROID-SLAM 做相机估计。
+4D hand motion reconstruction from monocular video. Outputs MANO hand pose parameters (NPZ).
 
-## 环境要求
+## Quick Start
 
-两个 conda 环境：
+```bash
+# Put your video in test/videos/
+cp my_video.mp4 test/videos/my-video.mp4
 
-| 环境 | 用途 | 关键依赖 |
-|------|------|----------|
-| `dynhamr` | HaMeR 手部检测 + Dyn-HaMR 优化/可视化 | PyTorch 2.7+, MANO |
-| `vipe` | VIPE 相机估计 | PyTorch, vipe (pip install -e) |
+# Run full pipeline
+bash run_pipeline.sh my-video
 
-## 目录结构
+# Output: test/my-video_postprocessed.npz
+```
+
+## Environment
+
+Two conda environments required:
+
+| Environment | Purpose |
+|------------|---------|
+| `dynhamr` | HaMeR hand detection + optimization + visualization |
+| `vipe` | VIPE camera estimation (DROID-SLAM variant) |
+
+## Pipeline Steps
+
+### Input
+- `test/videos/<seq>.mp4` — 1080p video, H.264 codec, <700 frames recommended
+- 4K videos: downscale to 1080p first (`ffmpeg -i input.mp4 -vf scale=1920:1080 -c:v libx264 -an output.mp4`)
+- Long videos (>700 frames): may OOM during VIPE. Trim or split first.
+
+### Step 1: VIPE Camera Estimation
+```bash
+conda activate vipe
+cd third-party/vipe
+vipe infer test/videos/<seq>.mp4 -p dynhamr
+```
+Outputs camera pose + intrinsics to `third-party/vipe/vipe_results/`.
+
+### Step 2: HaMeR Hand Detection
+```bash
+conda activate dynhamr
+cd dyn-hamr
+python run_opt.py data=video_vipe data.seq=<seq> run_opt=False run_vis=False
+```
+Extracts frames, runs YOLO hand detector + HaMeR mesh estimation, loads VIPE cameras.
+
+### Step 3: Optimization
+```bash
+python run_opt.py data=video_vipe data.seq=<seq> run_vis=False
+```
+- `root_fit` (50 iterations): global translation + orientation
+- `smooth_fit` (60 iterations): full pose + shape + temporal smoothing
+- Axis-angle normalization: wraps root_orient and finger joints to [-π, π] after each LBFGS step to prevent rotation flips
+
+### Step 4: Post-processing
+```bash
+python postprocess_npz.py --input <npz_path> --output test/<seq>_postprocessed.npz
+```
+- Runs MANO forward pass to get vertices
+- Detects frames with abnormal vertex displacement (MAD outlier detection)
+- Interpolates outlier frames' parameters (trans, root_orient, pose_body) from neighbors
+- Skips first/last 1 second (30 frames) to avoid boundary artifacts
+
+### Output
+
+**NPZ file** containing:
+| Key | Shape | Description |
+|-----|-------|-------------|
+| `trans` | (2, T, 3) | Wrist translation per hand |
+| `root_orient` | (2, T, 3) | Global hand orientation (axis-angle) |
+| `pose_body` | (2, T, 15, 3) | Finger joint poses (axis-angle) |
+| `betas` | (2, 10) | Hand shape parameters |
+| `is_right` | (2, T) | 0=left hand, 1=right hand |
+| `cam_R` | (2, T, 3, 3) | Camera rotation (world-to-camera) |
+| `cam_t` | (2, T, 3) | Camera translation |
+| `intrins` | (4,) | Camera intrinsics [fx, fy, cx, cy] |
+
+### Optional: Visualization
+```bash
+# Mesh overlay on source video
+python run_vis.py --log_root <log_dir> --save_root <output_dir> --phases smooth_fit --render_views src_cam --overwrite
+
+# Skeleton overlay (from postprocessed NPZ)
+python render_skeleton.py --npz_path <npz> --video_path <video> --output_path <output.mp4>
+```
+
+## Directory Structure
 
 ```
 Dyn-HaMR/
-├── dyn-hamr/                          # 主运行目录（所有 python 命令在此执行）
-│   ├── run_opt.py                     # 主入口
+├── run_pipeline.sh              # One-command full pipeline
+├── dyn-hamr/
+│   ├── run_opt.py               # Main optimization entry
+│   ├── run_vis.py               # Visualization (mesh rendering)
+│   ├── render_skeleton.py       # Skeleton overlay rendering
+│   ├── postprocess_npz.py       # NPZ post-processing
 │   ├── confs/
 │   │   ├── config.yaml
-│   │   └── data/video_vipe.yaml       # VIPE 数据配置
-│   ├── data/vidproc.py                # 预处理（帧提取、HaMeR、VIPE 相机加载）
-│   ├── optim/                         # 优化器
-│   └── vis/                           # 可视化
+│   │   ├── optim.yaml           # Optimization parameters
+│   │   └── data/video_vipe.yaml # Data paths config
+│   ├── optim/
+│   │   ├── optimizers.py        # LBFGS optimizer + axis-angle normalization
+│   │   └── losses.py            # Loss functions
+│   └── vis/
+│       ├── output.py            # Rendering pipeline
+│       └── tools.py             # OneEuroFilter, smoothing utilities
 ├── third-party/
-│   ├── hamer/                         # HaMeR 手部估计（修改版）
-│   └── vipe/                          # VIPE 相机估计（修改版）
-│       └── vipe_results/              # VIPE 输出目录
-│           ├── pose/<seq>.npz         #   相机 pose (N, 4, 4)
-│           └── intrinsics/<seq>.npz   #   相机内参 (N, 4) [fx, fy, cx, cy]
-├── test/                              # 输入数据根目录
-│   ├── videos/<seq>.mp4               #   输入视频
-│   ├── images/<seq>/                  #   提取的帧（自动生成）
-│   └── dynhamr/
-│       ├── track_preds/<seq>/         #   HaMeR 检测结果（自动生成）
-│       ├── cameras/<seq>/shot-0/      #   相机参数（自动生成）
-│       └── shot_idcs/<seq>.json       #   镜头分段索引（自动生成）
-├── outputs/logs/video-custom/<date>/  # 输出目录
-│   └── <seq>-all-shot-0-0--1/
-│       ├── *_smooth_fit_grid.mp4      #   主要结果（四宫格视频）
-│       ├── *_src_cam.mp4              #   原视角叠加渲染
-│       ├── *_{above,side,front}.mp4   #   3D 视角渲染
-│       ├── root_fit/                  #   root 阶段优化参数
-│       └── smooth_fit/                #   smooth 阶段优化参数
-└── _DATA/                             # 模型权重
-    └── data/mano/                     #   MANO 模型
+│   ├── hamer/                   # HaMeR hand estimation
+│   └── vipe/                    # VIPE camera estimation
+│       └── vipe_results/        # VIPE output (auto-generated)
+├── test/
+│   ├── videos/<seq>.mp4         # INPUT: source videos
+│   ├── <seq>_postprocessed.npz  # OUTPUT: final hand pose
+│   ├── images/<seq>/            # Extracted frames (auto)
+│   └── dynhamr/                 # Intermediate data (auto)
+├── outputs/logs/                # Optimization logs + raw NPZ
+└── _DATA/                       # Model weights (MANO, HaMeR)
 ```
 
-## 完整流程
+## Key Parameters (optim.yaml)
 
-### 0. 准备输入
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `smooth.num_iters` | 60 | Smooth optimization iterations |
+| `root.num_iters` | 50 | Root optimization iterations |
+| `joints2d_sigma` | 100 | GMOF robust loss sigma |
+| `joints3d_smooth` | [1000, 10000, 0] | Temporal smoothness weight per stage |
+| `pose_prior` | [1, 1, 1] | Pose regularization weight |
 
-将视频放到 `test/videos/<seq>.mp4`。例如：
+## Hardware Requirements
 
-```bash
-cp my_video.mp4 test/videos/my-video.mp4
-```
-
-> **长视频处理**：VIPE 对长视频（>400帧）可能 OOM。建议用 ffmpeg 分段：
-> ```bash
-> # 按帧数切割（每段 341 帧，25fps）
-> ffmpeg -i test/videos/long-video.mp4 -vframes 341 -c copy test/videos/long-video-p1.mp4
-> ffmpeg -i test/videos/long-video.mp4 -ss 13.64 -vframes 341 -c copy test/videos/long-video-p2.mp4
-> ```
-> 每段作为独立的 `<seq>` 分别跑完整流程。
-
----
-
-### Stage 1: 帧提取 + HaMeR 手部检测
-
-```bash
-conda activate dynhamr
-cd Dyn-HaMR/dyn-hamr
-
-python run_opt.py data=video_vipe data.seq=<seq> run_opt=False run_vis=False
-```
-
-自动执行：
-1. 从 `test/videos/<seq>.mp4` 提取帧到 `test/images/<seq>/`
-2. YOLO 手部检测 + HaMeR 手部 mesh 估计
-3. 结果保存到 `test/dynhamr/track_preds/<seq>/`
-4. 如果已有 VIPE 结果，还会自动生成相机参数
-
----
-
-### Stage 2: VIPE 相机估计
-
-```bash
-conda activate vipe
-cd Dyn-HaMR/third-party/vipe
-
-# -p dynhamr: 使用精简 pipeline（跳过分割/深度模型，只输出 pose + intrinsics）
-vipe infer test/videos/<seq>.mp4 -o vipe_results/ -p dynhamr
-```
-
-输出：
-- `vipe_results/pose/<seq>.npz` — 相机外参 cam2world (N, 4, 4)
-- `vipe_results/intrinsics/<seq>.npz` — 相机内参 [fx, fy, cx, cy] (N, 4)
-
-> **注意**：`-o vipe_results/` 中的视频路径是**绝对路径或相对于当前目录**。
-> VIPE 会自动用视频文件名（不含扩展名）作为序列名。
-
----
-
-### Stage 3: 优化 + 可视化
-
-```bash
-conda activate dynhamr
-cd Dyn-HaMR/dyn-hamr
-
-python run_opt.py data=video_vipe data.seq=<seq>
-```
-
-自动执行：
-1. `root_fit`：50 iterations，初始化全局位移和尺度
-2. `smooth_fit`：300 iterations，联合优化手部 pose + 平滑约束
-3. 可视化：生成四宫格视频和各视角视频
-
-输出保存到 `outputs/logs/video-custom/<date>/<seq>-all-shot-0-0--1/`
-
-生成视频：
-- `*_smooth_fit_grid.mp4` — 四宫格：输入 + above/side/front 3D 视角
-- `*_smooth_fit_final_000300_src_cam.mp4` — 原视角手部叠加
-- `*_smooth_fit_final_000300_{above,side,front}.mp4` — 单独 3D 视角（含棋盘格地面）
-
-3D 视角（above/side/front）会自动渲染棋盘格地面，地面高度为手部最低顶点下方 5cm。原视角（src_cam）不渲染地面，保留原始视频背景。
-
-> 也可以分步运行：
-> - 仅优化：`run_vis=False`
-> - 仅可视化（复用已有优化结果）：`run_opt=False run_vis=True`
-
-## 关键参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `data=video_vipe` | — | 使用 VIPE 相机数据配置 |
-| `data.seq=<seq>` | — | 序列名（对应视频文件名，不含扩展名） |
-| `run_opt` | True | 是否运行优化 |
-| `run_vis` | True | 是否运行可视化 |
-| `is_static` | False | 相机是否静止（动态相机设 False） |
-
-## 修改说明（相对上游）
-
-### Dyn-HaMR (`dyn-hamr/`)
-- `run_opt.py`: torch.load monkey-patch（PyTorch 2.7 兼容）
-- `data/vidproc.py`: 添加 VIPE 相机加载 (`load_vipe_cameras`)
-- `confs/data/video_vipe.yaml`: VIPE 数据配置
-- `optim/optimizers.py`: 修复 checkpoint 恢复时 requires_grad 丢失
-- `optim/output.py`: 修复 dtype 不匹配
-- `vis/output.py`: 启用棋盘格地面渲染（根据手部 bounding box 自动定位高度）
-- `HMP/fitting.py`: 修复多 chunk 拟合、移除 StepLR verbose
-
-### VIPE (`third-party/vipe/`)
-- `configs/pipeline/dynhamr.yaml`: 精简 pipeline 配置（跳过分割/深度模型）
-- `vipe/pipeline/default.py`: 快速路径，无需 post-processing 时直接保存 pose+intrinsics
-- `vipe/utils/io.py`: 新增 `save_pose_intrinsics_only()` 直接从 SLAM 输出保存
-
-### HaMeR (`third-party/hamer/`)
-- `run.py`: torch.load monkey-patch; `--no_viz` 跳过可视化; Renderer 按需加载
-
-## Fork 仓库
-
-| Repo | Branch |
-|------|--------|
-| [Dyn-HaMR](https://github.com/zekai-chen-deepreach/Dyn-HaMR/tree/dynhamr-compat) | `dynhamr-compat` |
-| [vipe](https://github.com/zekai-chen-deepreach/vipe/tree/dynhamr-compat) | `dynhamr-compat` |
-| [hamer](https://github.com/zekai-chen-deepreach/hamer/tree/dynhamr-compat) | `dynhamr-compat` |
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| GPU VRAM | 15 GB (T4) | 16+ GB |
+| RAM | 32 GB | 32+ GB |
+| VIPE needs RAM for SLAM — 16GB is not enough for >300 frame videos. |
