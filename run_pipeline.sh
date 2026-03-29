@@ -41,12 +41,13 @@ if [ ! -f "$SCRIPT_DIR/test/videos/$SEQ.mp4" ]; then
     exit 1
 fi
 
-# Auto-convert HEVC to H.264 (VIPE OOMs on HEVC)
+# Auto-convert to H.264 1080p (VIPE OOMs on HEVC or 4K)
 CODEC=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$SCRIPT_DIR/test/videos/$SEQ.mp4")
-if [ "$CODEC" != "h264" ]; then
-    echo "  Converting $CODEC -> h264..."
-    ffmpeg -y -i "$SCRIPT_DIR/test/videos/$SEQ.mp4" -c:v libx264 -an "$SCRIPT_DIR/test/videos/${SEQ}_h264.mp4" 2>/dev/null
-    mv "$SCRIPT_DIR/test/videos/${SEQ}_h264.mp4" "$SCRIPT_DIR/test/videos/$SEQ.mp4"
+HEIGHT=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$SCRIPT_DIR/test/videos/$SEQ.mp4")
+if [ "$CODEC" != "h264" ] || [ "$HEIGHT" -gt 1080 ]; then
+    echo "  Converting ${CODEC} ${HEIGHT}p -> h264 1080p..."
+    ffmpeg -y -i "$SCRIPT_DIR/test/videos/$SEQ.mp4" -vf "scale=-2:1080" -c:v libx264 -an "$SCRIPT_DIR/test/videos/${SEQ}_conv.mp4" 2>/dev/null
+    mv "$SCRIPT_DIR/test/videos/${SEQ}_conv.mp4" "$SCRIPT_DIR/test/videos/$SEQ.mp4"
 fi
 
 mkdir -p "$OUTPUT_DIR"
