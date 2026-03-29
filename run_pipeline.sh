@@ -89,21 +89,18 @@ python postprocess_npz.py --input "$NPZ" --output "$OUTPUT_DIR/${SEQ}_postproces
 # Copy raw npz too
 cp "$NPZ" "$OUTPUT_DIR/${SEQ}_raw.npz"
 
-# Step 5: Render mesh overlay
-echo ""
-echo "[$(date)] Step 5/5: Rendering"
+# Step 5: Render mesh overlay (disabled — use separate render instance)
+# echo ""
+# echo "[$(date)] Step 5/5: Rendering"
+# LOG_DIR=$(dirname $(dirname "$NPZ"))
+# cp "$OUTPUT_DIR/${SEQ}_postprocessed.npz" "$NPZ"
+# python run_vis.py --log_root "$LOG_DIR" --save_root "$OUTPUT_DIR" --phases smooth_fit --render_views src_cam --overwrite
+# MESH_FILE=$(ls "$OUTPUT_DIR/"*src_cam.mp4 2>/dev/null | head -1)
+# [ -n "$MESH_FILE" ] && mv "$MESH_FILE" "$OUTPUT_DIR/${SEQ}_mesh.mp4"
+
 LOG_DIR=$(dirname $(dirname "$NPZ"))
 
-# Replace raw npz with postprocessed for rendering
-cp "$OUTPUT_DIR/${SEQ}_postprocessed.npz" "$NPZ"
-
-python run_vis.py --log_root "$LOG_DIR" --save_root "$OUTPUT_DIR" --phases smooth_fit --render_views src_cam --overwrite
-
-# Rename render output
-MESH_FILE=$(ls "$OUTPUT_DIR/"*src_cam.mp4 2>/dev/null | head -1)
-[ -n "$MESH_FILE" ] && mv "$MESH_FILE" "$OUTPUT_DIR/${SEQ}_mesh.mp4"
-
-# Collect all intermediate data for future rendering
+# Collect all data needed for rendering on separate instance
 echo ""
 echo "[$(date)] Collecting render data..."
 cp -r "$SCRIPT_DIR/test/images/$SEQ" "$OUTPUT_DIR/images/" 2>/dev/null || true
