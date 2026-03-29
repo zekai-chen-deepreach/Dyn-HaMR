@@ -1,71 +1,61 @@
 # Dyn-HaMR Pipeline
 
-4D hand motion reconstruction from monocular video. Outputs MANO hand pose parameters (NPZ).
+4D hand motion reconstruction from monocular video. Outputs MANO hand pose parameters (NPZ) + mesh rendering.
 
 ## Quick Start
 
 ```bash
-# Put your video in test/videos/
+# Put your video in test/videos/ (H.264 codec, 1080p)
 cp my_video.mp4 test/videos/my-video.mp4
 
-# Run full pipeline
+# Run full pipeline (VIPE → HaMeR → optimize → postprocess → render)
 bash run_pipeline.sh my-video
 
-# Output: test/my-video_postprocessed.npz
+# Output: test/output/my-video/
+#   ├── my-video_postprocessed.npz   # Final hand pose
+#   ├── my-video_raw.npz             # Raw optimization result
+#   ├── my-video_mesh.mp4            # Mesh overlay video
+#   ├── images/                      # Extracted frames (for re-rendering)
+#   ├── cameras/                     # Camera params (for re-rendering)
+#   ├── track_preds/                 # Hand detection (for re-rendering)
+#   ├── shot_idcs.json               # Shot segmentation
+#   └── hydra_config/                # Config snapshot
 ```
 
 ## Environment
 
-Two conda environments required:
+Two conda environments:
 
 | Environment | Purpose |
 |------------|---------|
-| `dynhamr` | HaMeR hand detection + optimization + visualization |
+| `dynhamr` | HaMeR hand detection + optimization + rendering |
 | `vipe` | VIPE camera estimation (DROID-SLAM variant) |
 
-## Pipeline Steps
+## Input Requirements
 
-### Input
-- `test/videos/<seq>.mp4` — 1080p video, H.264 codec, <700 frames recommended
-- 4K videos: downscale to 1080p first (`ffmpeg -i input.mp4 -vf scale=1920:1080 -c:v libx264 -an output.mp4`)
-- Long videos (>700 frames): may OOM during VIPE. Trim or split first.
+- **Format**: MP4, H.264 codec (HEVC will be auto-converted)
+- **Resolution**: 1080p (4K will need manual downscale: `ffmpeg -i in.mp4 -vf scale=1920:1080 -c:v libx264 -an out.mp4`)
+- **Length**: <700 frames recommended. VIPE may OOM on longer videos.
+- **Placement**: `test/videos/<seq>.mp4`
 
-### Step 1: VIPE Camera Estimation
-```bash
-conda activate vipe
-cd third-party/vipe
-vipe infer test/videos/<seq>.mp4 -p dynhamr
+## Output Structure
+
 ```
-Outputs camera pose + intrinsics to `third-party/vipe/vipe_results/`.
-
-### Step 2: HaMeR Hand Detection
-```bash
-conda activate dynhamr
-cd dyn-hamr
-python run_opt.py data=video_vipe data.seq=<seq> run_opt=False run_vis=False
+test/output/<seq>/
+├── <seq>_postprocessed.npz    # Final NPZ (vertex-space outliers fixed)
+├── <seq>_raw.npz              # Raw optimization NPZ
+├── <seq>_mesh.mp4             # Mesh overlay rendering (src_cam view)
+├── images/                    # Extracted video frames
+├── cameras/                   # VIPE camera parameters
+├── track_preds/               # HaMeR hand detection results
+├── shot_idcs.json             # Shot segmentation index
+└── hydra_config/              # Hydra config for reproducibility
 ```
-Extracts frames, runs YOLO hand detector + HaMeR mesh estimation, loads VIPE cameras.
 
-### Step 3: Optimization
-```bash
-python run_opt.py data=video_vipe data.seq=<seq> run_vis=False
-```
-- `root_fit` (50 iterations): global translation + orientation
-- `smooth_fit` (60 iterations): full pose + shape + temporal smoothing
-- Axis-angle normalization: wraps root_orient and finger joints to [-π, π] after each LBFGS step to prevent rotation flips
+All files needed for re-rendering are included in the output directory.
 
-### Step 4: Post-processing
-```bash
-python postprocess_npz.py --input <npz_path> --output test/<seq>_postprocessed.npz
-```
-- Runs MANO forward pass to get vertices
-- Detects frames with abnormal vertex displacement (MAD outlier detection)
-- Interpolates outlier frames' parameters (trans, root_orient, pose_body) from neighbors
-- Skips first/last 1 second (30 frames) to avoid boundary artifacts
+## NPZ Format
 
-### Output
-
-**NPZ file** containing:
 | Key | Shape | Description |
 |-----|-------|-------------|
 | `trans` | (2, T, 3) | Wrist translation per hand |
@@ -77,14 +67,47 @@ python postprocess_npz.py --input <npz_path> --output test/<seq>_postprocessed.n
 | `cam_t` | (2, T, 3) | Camera translation |
 | `intrins` | (4,) | Camera intrinsics [fx, fy, cx, cy] |
 
-### Optional: Visualization
-```bash
-# Mesh overlay on source video
-python run_vis.py --log_root <log_dir> --save_root <output_dir> --phases smooth_fit --render_views src_cam --overwrite
+## Pipeline Steps (run_pipeline.sh)
 
-# Skeleton overlay (from postprocessed NPZ)
-python render_skeleton.py --npz_path <npz> --video_path <video> --output_path <output.mp4>
+1. **VIPE** — Camera estimation via DROID-SLAM
+2. **HaMeR** — YOLO hand detection + HaMeR mesh estimation
+3. **Optimization** — root_fit (50 iter) + smooth_fit (60 iter) with axis-angle [-π,π] normalization
+4. **Post-processing** — Vertex-space outlier detection + parameter interpolation (skips first/last 1s)
+5. **Rendering** — Mesh overlay on source video frames
+
+## Re-rendering from Output
+
+If you have an output directory, you can re-render without re-running the pipeline:
+
+```bash
+conda activate dynhamr
+cd dyn-hamr
+
+# The output directory contains everything needed
+python run_vis.py \
+    --log_root <output_dir>/hydra_config/.. \
+    --save_root <render_output_dir> \
+    --phases smooth_fit \
+    --render_views src_cam \
+    --overwrite
 ```
+
+## Key Optimizations
+
+- **Axis-angle normalization**: Wraps root_orient and finger joints to [-π,π] after each LBFGS step, preventing rotation flips
+- **Vertex-space post-processing**: Detects abnormal mesh jumps via MANO forward pass, fixes parameters by interpolation
+- **Auto H.264 conversion**: HEVC videos are auto-converted (VIPE OOMs on HEVC due to higher memory usage)
+- **60-iteration smooth_fit**: Reduced from 300 (98% loss convergence, 5x faster)
+
+## Hardware Requirements
+
+| Component | Pipeline (full) | Render only |
+|-----------|----------------|-------------|
+| GPU VRAM | 15 GB (T4) | 2 GB |
+| RAM | 64 GB | 16 GB |
+| Instance | g4dn.4xlarge | g4dn.xlarge |
+
+> **RAM note**: VIPE SLAM requires ~50GB RAM for 400-frame videos. 32GB is insufficient for >300 frames.
 
 ## Directory Structure
 
@@ -93,46 +116,21 @@ Dyn-HaMR/
 ├── run_pipeline.sh              # One-command full pipeline
 ├── dyn-hamr/
 │   ├── run_opt.py               # Main optimization entry
-│   ├── run_vis.py               # Visualization (mesh rendering)
+│   ├── run_vis.py               # Mesh rendering
 │   ├── render_skeleton.py       # Skeleton overlay rendering
-│   ├── postprocess_npz.py       # NPZ post-processing
+│   ├── postprocess_npz.py       # NPZ vertex-space post-processing
 │   ├── confs/
 │   │   ├── config.yaml
 │   │   ├── optim.yaml           # Optimization parameters
 │   │   └── data/video_vipe.yaml # Data paths config
-│   ├── optim/
-│   │   ├── optimizers.py        # LBFGS optimizer + axis-angle normalization
-│   │   └── losses.py            # Loss functions
-│   └── vis/
-│       ├── output.py            # Rendering pipeline
-│       └── tools.py             # OneEuroFilter, smoothing utilities
+│   └── optim/
+│       └── optimizers.py        # LBFGS optimizer + axis-angle normalization
 ├── third-party/
 │   ├── hamer/                   # HaMeR hand estimation
 │   └── vipe/                    # VIPE camera estimation
-│       └── vipe_results/        # VIPE output (auto-generated)
 ├── test/
-│   ├── videos/<seq>.mp4         # INPUT: source videos
-│   ├── <seq>_postprocessed.npz  # OUTPUT: final hand pose
-│   ├── images/<seq>/            # Extracted frames (auto)
-│   └── dynhamr/                 # Intermediate data (auto)
-├── outputs/logs/                # Optimization logs + raw NPZ
+│   ├── videos/                  # INPUT: source videos
+│   └── output/                  # OUTPUT: results per video
+├── outputs/logs/                # Intermediate optimization logs
 └── _DATA/                       # Model weights (MANO, HaMeR)
 ```
-
-## Key Parameters (optim.yaml)
-
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `smooth.num_iters` | 60 | Smooth optimization iterations |
-| `root.num_iters` | 50 | Root optimization iterations |
-| `joints2d_sigma` | 100 | GMOF robust loss sigma |
-| `joints3d_smooth` | [1000, 10000, 0] | Temporal smoothness weight per stage |
-| `pose_prior` | [1, 1, 1] | Pose regularization weight |
-
-## Hardware Requirements
-
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| GPU VRAM | 15 GB (T4) | 16+ GB |
-| RAM | 32 GB | 32+ GB |
-| VIPE needs RAM for SLAM — 16GB is not enough for >300 frame videos. |
