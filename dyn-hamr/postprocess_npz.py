@@ -71,7 +71,7 @@ def _slerp_aa(aa1, aa2, alpha):
     return _rotmat_to_aa(R_interp)
 
 
-def postprocess_npz(input_path, output_path=None, margin=30, thresh=3.0, device='cuda'):
+def postprocess_npz(input_path, output_path=None, margin=30, thresh=3.0, min_vel=0.1, device='cuda'):
     if output_path is None:
         output_path = input_path
 
@@ -113,7 +113,7 @@ def postprocess_npz(input_path, output_path=None, margin=30, thresh=3.0, device=
 
         med = np.median(vel)
         mad = max(np.median(np.abs(vel - med)), 1e-6)
-        threshold = med + thresh * mad * 1.4826
+        threshold = max(med + thresh * mad * 1.4826, min_vel)
 
         # Only detect in middle region
         outliers = set()
@@ -173,6 +173,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', default=None)
     parser.add_argument('--margin', type=int, default=30, help='Skip first/last N frames (default: 30 = 1 second at 30fps)')
     parser.add_argument('--thresh', type=float, default=3.0)
+    parser.add_argument('--min_vel', type=float, default=0.1, help='Minimum absolute vertex velocity threshold (meters). Prevents false positives on fast but valid hand motion.')
     parser.add_argument('--device', default='cuda')
     args = parser.parse_args()
-    postprocess_npz(args.input, args.output, args.margin, args.thresh, args.device)
+    postprocess_npz(args.input, args.output, args.margin, args.thresh, args.min_vel, args.device)
