@@ -16,6 +16,9 @@ __pycache__/
 *.pt
 *.npz
 *.npy
+*.mp4
+*.mov
+*.MOV
 *zip
 *.specstory*
 test/
