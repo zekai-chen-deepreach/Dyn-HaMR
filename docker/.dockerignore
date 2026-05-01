@@ -1,0 +1,12 @@
+.git
+**/__pycache__
+**/*.pyc
+test/images
+test/videos
+test/dynhamr
+outputs
+_DATA
+**/.cache
+**/.specstory
+**/dyn-hamr/mch_*.mp4
+docker/_DATA.tar.zst.tmp

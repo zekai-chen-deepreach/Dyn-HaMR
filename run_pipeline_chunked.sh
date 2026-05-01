@@ -48,10 +48,14 @@ fi
 
 DO_RENDER=true
 MAX_FRAMES=600
+EMIT_PAIRS_ROOT=""
+PAIR_GLOBAL_START=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-render) DO_RENDER=false; shift ;;
         --max-frames) MAX_FRAMES="$2"; shift 2 ;;
+        --emit-pairs) EMIT_PAIRS_ROOT="$(realpath "$2")"; shift 2 ;;
+        --pair-global-start) PAIR_GLOBAL_START="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -93,6 +97,8 @@ echo "  Output: $OUTPUT_DIR"
 echo "  SEQ:    $SEQ"
 echo "  MAX_FRAMES per chunk: $MAX_FRAMES"
 echo "  Render: $DO_RENDER"
+echo "  Emit pairs: ${EMIT_PAIRS_ROOT:-no}"
+[ -n "$EMIT_PAIRS_ROOT" ] && echo "  Pair global start: $PAIR_GLOBAL_START"
 echo "============================================"
 
 # Capture all stdout/stderr to a log
@@ -181,6 +187,56 @@ for (( idx=0; idx<${#SEQUENCES[@]}; idx++ )); do
 
     echo "  Optimizing (smooth_fit)..."
     $PYTHON run_opt.py data=video_vipe "data.seq=$SEQ_NAME" run_vis=False 2>&1 | tail -3
+
+    # ── Per-chunk pair emission ──
+    if [ -n "$EMIT_PAIRS_ROOT" ]; then
+        TODAY="$(date +%Y-%m-%d)"
+        CHUNK_LOG="$LOG_ROOT/video-custom/$TODAY/${SEQ_NAME}-all-shot-0-0--1"
+        SMOOTH_NPZ="$CHUNK_LOG/smooth_fit/${SEQ_NAME}_000060_world_results.npz"
+        HAMER_PKL="$TEST_DIR/dynhamr/hamer_out/${SEQ_NAME}/${SEQ_NAME}.pkl"
+        IMG_DIR="$TEST_DIR/images/${SEQ_NAME}"
+
+        if [ ! -f "$SMOOTH_NPZ" ]; then
+            echo "  WARN: smooth_fit NPZ not found at $SMOOTH_NPZ, skipping pair emit"
+        elif [ ! -f "$HAMER_PKL" ]; then
+            echo "  WARN: HaMeR pkl not found at $HAMER_PKL, skipping pair emit"
+        else
+            # Per-chunk SLERP postprocess to get outlier mask + post NPZ
+            CHUNK_RAW_NPZ="$CHUNK_LOG/smooth_fit/${SEQ_NAME}_raw.npz"
+            CHUNK_POST_NPZ="$CHUNK_LOG/smooth_fit/${SEQ_NAME}_post.npz"
+            cp "$SMOOTH_NPZ" "$CHUNK_RAW_NPZ"
+            $PYTHON postprocess_npz.py --input "$SMOOTH_NPZ" --output "$CHUNK_POST_NPZ" 2>&1 | tail -3
+
+            # Discover chunk's actual frame count (= smaller of MAX_FRAMES, image dir size)
+            N_CHUNK=$(ls "$IMG_DIR" 2>/dev/null | wc -l)
+
+            # Compute src_frame_start (chunks are 0-indexed in pair_writer)
+            # SEQ_NAME = test60-pK ⇒ chunk_idx = K-1
+            CHUNK_NUM=$(echo "$SEQ_NAME" | sed -E 's/.*-p([0-9]+)$/\1/')
+            CHUNK_IDX=$((CHUNK_NUM - 1))
+            FPS_F=$(echo "scale=8; $FPS_NUM / $FPS_DEN" | bc)
+            SRC_FRAME_START=$(echo "scale=0; ($CHUNK_IDX * $MAX_FRAMES * $FPS_DEN + $FPS_NUM/2) / $FPS_NUM" | bc)
+            # Actually: chunk_idx * (MAX_FRAMES seconds at 30fps assumed) → src frame at fps_real
+            SRC_FRAME_START=$(echo "scale=0; $CHUNK_IDX * $MAX_FRAMES / 30.0 * $FPS_F / 1" | bc 2>/dev/null || echo $((CHUNK_IDX * MAX_FRAMES)))
+
+            PAIR_GLOBAL_IDX=$((PAIR_GLOBAL_START + CHUNK_IDX))
+
+            $PYTHON "$SCRIPT_DIR/scripts/pair_writer.py" \
+                --source-video "$INPUT_VIDEO" \
+                --chunk-idx "$CHUNK_IDX" \
+                --src-frame-start "$SRC_FRAME_START" \
+                --n-frames "$N_CHUNK" \
+                --fps-src "$FPS_F" \
+                --img-w "$WIDTH" \
+                --img-h "$HEIGHT" \
+                --hamer-pkl "$HAMER_PKL" \
+                --image-dir "$IMG_DIR" \
+                --dyn-post-npz "$CHUNK_POST_NPZ" \
+                --dyn-raw-npz "$CHUNK_RAW_NPZ" \
+                --out-root "$EMIT_PAIRS_ROOT" \
+                --pair-global-idx "$PAIR_GLOBAL_IDX" 2>&1 | tail -5
+        fi
+    fi
 done
 
 # ──────────────────────────────────────────────────────────────────────────────
