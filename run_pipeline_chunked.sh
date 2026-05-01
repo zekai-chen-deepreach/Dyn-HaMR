@@ -81,8 +81,13 @@ unset DISPLAY
 conda activate dynhamr
 
 PYTHON="$(which python)"
+# Prefer the env-local binary (faster, isolated), fall back to system PATH.
 FFMPEG="$HOME/miniconda3/envs/dynhamr/bin/ffmpeg"
+[ ! -x "$FFMPEG" ] && FFMPEG="$(command -v ffmpeg)"
 FFPROBE="$HOME/miniconda3/envs/dynhamr/bin/ffprobe"
+[ ! -x "$FFPROBE" ] && FFPROBE="$(command -v ffprobe)"
+[ -z "$FFMPEG" ]  && { echo "ERROR: ffmpeg not found";  exit 1; }
+[ -z "$FFPROBE" ] && { echo "ERROR: ffprobe not found"; exit 1; }
 
 mkdir -p "$VIDEO_DIR" "$OUTPUT_DIR"
 
