@@ -84,6 +84,11 @@ export EGL_DEVICE_ID=0
 unset DISPLAY
 conda activate dynhamr
 
+# Make ultralytics/YOLO + torch's CUDA loader find cudnn 8 + libcuda.so on
+# Thunder/cloud AMIs that don't expose them via default loader paths.
+TORCH_LIB="$(python -c 'import torch,os; print(os.path.join(os.path.dirname(torch.__file__),"lib"))' 2>/dev/null)"
+[ -n "$TORCH_LIB" ] && export LD_LIBRARY_PATH="$TORCH_LIB:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+
 PYTHON="$(which python)"
 # Prefer the env-local binary (faster, isolated), fall back to system PATH.
 FFMPEG="$HOME/miniconda3/envs/dynhamr/bin/ffmpeg"
