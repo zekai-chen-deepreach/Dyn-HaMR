@@ -48,19 +48,39 @@ RUN git clone --recursive --depth 1 -b ${DYN_HAMR_REF} \
         https://github.com/zekai-chen-deepreach/Dyn-HaMR.git /workspace
 WORKDIR /workspace
 
-# Pin submodules to your dynhamr-compat branches that contain the patches
-RUN cd third-party/hamer && git fetch origin dynhamr-compat && git checkout dynhamr-compat \
-    && cd ../vipe && git fetch origin dynhamr-compat && git checkout dynhamr-compat
+# Pin submodules to the dynhamr-compat branches on the user's forks (the
+# patches that add --no_viz, fast-pose-only path, bbox-in-pkl, etc. live there).
+# .gitmodules points at upstream (ZhengdiYu/hamer, nv-tlabs/vipe), so add the
+# fork remotes here.
+RUN cd third-party/hamer \
+    && git remote add fork https://github.com/zekai-chen-deepreach/hamer.git \
+    && git fetch fork dynhamr-compat \
+    && git checkout -B dynhamr-compat FETCH_HEAD \
+    && cd ../vipe \
+    && git remote add fork https://github.com/zekai-chen-deepreach/vipe.git \
+    && git fetch fork dynhamr-compat \
+    && git checkout -B dynhamr-compat FETCH_HEAD
 
 # ── Python env ──────────────────────────────────────────────────────────────
 SHELL ["/bin/bash", "-lc"]
 
-RUN conda create -n dynhamr python=3.10 -y \
+# Recent miniconda requires explicit ToS acceptance for the default channels.
+RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
+    && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r \
+    && conda create -n dynhamr python=3.10 -y \
     && conda run -n dynhamr pip install --no-cache-dir \
         torch==1.13.0 torchvision==0.14.0 --index-url https://download.pytorch.org/whl/cu117 \
-    && conda run -n dynhamr pip install --no-cache-dir \
+    # torch 1.13's cpp_extension imports pkg_resources, which setuptools >=70
+    # removed. Pin to 59.5.0 (matches requirements.txt) before building extensions.
+    && conda run -n dynhamr pip install --no-cache-dir 'setuptools==59.5.0' wheel \
+    # Pre-install build/runtime deps that chumpy's setup.py imports at build time
+    # (it does `import pip`, `import numpy`). Otherwise PEP-517 isolated builds fail.
+    && conda run -n dynhamr pip install --no-cache-dir --no-build-isolation \
+        'numpy<1.24' pip \
+    && conda run -n dynhamr pip install --no-cache-dir --no-build-isolation \
         torch-scatter -f https://data.pyg.org/whl/torch-1.13.0+cu117.html \
-    && conda run -n dynhamr pip install --no-cache-dir -r requirements.txt \
+    && conda run -n dynhamr pip install --no-cache-dir --no-build-isolation \
+        -r requirements.txt \
     && conda run -n dynhamr pip install --no-cache-dir -e .
 
 # HaMeR (with ViTPose) + DROID-SLAM (only DROID-SLAM optional path; VIPE replaces it)
