@@ -1,6 +1,8 @@
 type: video
 split: custom
-root: /home/deepreach/Zekai_code/Dyn-HaMR/test  # put your videos in root/videos/vid.mp4
+# Repo-relative root (env DYNHAMR_TEST_ROOT overrides). The pipeline script
+# writes chunk videos into ${DYNHAMR_TEST_ROOT}/videos/ — match here.
+root: ${oc.env:DYNHAMR_TEST_ROOT,/workspace/Dyn-HaMR/test}
 video_dir: videos
 seq: prod1
 ext: mp4
@@ -26,5 +28,5 @@ sources:
 
 # VIPE-specific options
 use_vipe: True
-vipe_dir: /home/deepreach/Zekai_code/Dyn-HaMR/third-party/vipe/vipe_results
+vipe_dir: ${oc.env:DYNHAMR_VIPE_DIR,/workspace/Dyn-HaMR/third-party/vipe/vipe_results}
 
