@@ -50,7 +50,7 @@ HMP:
   exp_name: None
 
 fps: 30
-log_root: /home/deepreach/Zekai_code/asi-human-data/thirdparty/dynhamr/outputs/logs
+log_root: ${oc.env:DYNHAMR_LOG_ROOT,/workspace/Dyn-HaMR/outputs/logs}
 log_dir: ${log_root}/${data.type}-${data.split}
 exp_name: ${now:%Y-%m-%d}
 temporal_smooth: True

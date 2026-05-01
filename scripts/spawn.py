@@ -58,18 +58,31 @@ def auth_headers() -> dict:
 def _load_token_from_cli() -> str | None:
     """Read token cached by `tnr login`. CLI stores it under ~/.thunder/."""
     for cand in (
-        Path.home() / ".thunder" / "token",
+        Path.home() / ".thunder" / "cli_config.json",
         Path.home() / ".thunder" / "config.json",
+        Path.home() / ".thunder" / "token",
     ):
         if cand.is_file():
             text = cand.read_text().strip()
             if cand.suffix == ".json":
                 try:
-                    return json.loads(text).get("token") or json.loads(text).get("api_token")
+                    j = json.loads(text)
+                    return j.get("token") or j.get("api_token") or j.get("access_token")
                 except json.JSONDecodeError:
                     continue
             return text
     return None
+
+
+def add_ssh_key_to_instance(instance_id, public_key_text: str) -> None:
+    """POST /instances/{id}/add_key — Thunder doesn't seed our key automatically.
+    Without this, ssh fails with publickey rejected. Required after every create."""
+    url = f"{THUNDER_API}/instances/{instance_id}/add_key"
+    r = requests.post(url, json={"public_key": public_key_text}, headers=auth_headers(), timeout=30)
+    if r.status_code >= 400:
+        print(f"[spawn] WARNING: add_key returned {r.status_code} {r.text}")
+    else:
+        print(f"[spawn] add_key ok for instance {instance_id}")
 
 
 def create_instance(args, name_suffix: int) -> dict:
@@ -115,14 +128,15 @@ def wait_for_running(instance_id: str, timeout_s: int = 600) -> dict:
     raise TimeoutError(f"instance {instance_id} not RUNNING after {timeout_s}s")
 
 
-def ssh_connect(host: str, port: int, key_path: Path, retries: int = 20) -> paramiko.SSHClient:
+def ssh_connect(host: str, port: int, key_path: Path, username: str = "ubuntu",
+                retries: int = 20) -> paramiko.SSHClient:
     pkey = paramiko.Ed25519Key.from_private_key_file(str(key_path))
     last_err = None
     for i in range(retries):
         try:
             c = paramiko.SSHClient()
             c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            c.connect(host, port=port, username="root", pkey=pkey, timeout=15, banner_timeout=15)
+            c.connect(host, port=port, username=username, pkey=pkey, timeout=15, banner_timeout=15)
             return c
         except Exception as e:
             last_err = e
@@ -181,6 +195,13 @@ def spawn_one(args, idx: int, env_vars: dict) -> dict:
     ip = info["ip"]
     port = info.get("port") or 22
     print(f"[spawn] running: id={info['id']} ip={ip}:{port}")
+
+    # Thunder doesn't auto-add the user's SSH key to a fresh instance; the CLI's
+    # `tnr connect` calls add_key behind the scenes. We replicate that here so
+    # the subsequent ssh_connect succeeds.
+    pub_key_text = Path(args.ssh_pub_key).expanduser().read_text().strip()
+    add_ssh_key_to_instance(info["id"], pub_key_text)
+    time.sleep(3)  # small grace period for sshd to reload authorized_keys
 
     client = ssh_connect(ip, port, Path(args.ssh_key).expanduser())
     try:
