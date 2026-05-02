@@ -73,6 +73,7 @@ VIPE_DIR="$SCRIPT_DIR/third-party/vipe"
 TEST_DIR="$SCRIPT_DIR/test"
 VIDEO_DIR="$TEST_DIR/videos"
 LOG_ROOT="${DYNHAMR_LOG_ROOT:-$SCRIPT_DIR/outputs/logs}"
+export DYNHAMR_LOG_ROOT="$LOG_ROOT"
 
 # Export hydra config knobs so run_opt.py subprocess sees consistent paths
 export DYNHAMR_TEST_ROOT="$TEST_DIR"
